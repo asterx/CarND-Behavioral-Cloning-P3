@@ -12,9 +12,10 @@ from PIL import Image
 from flask import Flask
 from io import BytesIO
 
-from keras.models import load_model
+from keras.models import model_from_json
 import h5py
 from keras import __version__ as keras_version
+from utils.data import preprocess
 
 sio = socketio.Server()
 app = Flask(__name__)
@@ -44,9 +45,8 @@ class SimplePIController:
 
 
 controller = SimplePIController(0.1, 0.002)
-set_speed = 9
+set_speed = 16
 controller.set_desired(set_speed)
-
 
 @sio.on('telemetry')
 def telemetry(sid, data):
@@ -61,6 +61,7 @@ def telemetry(sid, data):
         imgString = data["image"]
         image = Image.open(BytesIO(base64.b64decode(imgString)))
         image_array = np.asarray(image)
+        image_array = preprocess(image_array)
         steering_angle = float(model.predict(image_array[None, :, :, :], batch_size=1))
 
         throttle = controller.update(float(speed))
@@ -99,7 +100,12 @@ if __name__ == '__main__':
     parser.add_argument(
         'model',
         type=str,
-        help='Path to model h5 file. Model should be on the same path.'
+        help='Path to model json file.'
+    )
+    parser.add_argument(
+        'weights',
+        type=str,
+        help='Path to model weights (h5 file).'
     )
     parser.add_argument(
         'image_folder',
@@ -110,16 +116,11 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    # check that model Keras version is same as local Keras version
-    f = h5py.File(args.model, mode='r')
-    model_version = f.attrs.get('keras_version')
-    keras_version = str(keras_version).encode('utf8')
+    with open(args.model, 'r') as json_file:
+        model = model_from_json(json_file.read())
 
-    if model_version != keras_version:
-        print('You are using Keras version ', keras_version,
-              ', but the model was built using ', model_version)
-
-    model = load_model(args.model)
+    model.compile('adam', 'mse')
+    model.load_weights(args.weights)
 
     if args.image_folder != '':
         print("Creating image folder at {}".format(args.image_folder))
